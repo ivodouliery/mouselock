@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 @main
 struct mouselockApp: App {
@@ -13,85 +14,127 @@ struct mouselockApp: App {
 }
 
 class AppState: ObservableObject {
-    static let shared = AppState();
+    static let shared = AppState()
     
     @Published var games: Dictionary<String, String> = [
-        "com.riotgames.LeagueofLegends.GameClient": "1/League of Legends"
-    ];
+        "com.riotgames.LeagueofLegends.GameClient": "1/League of Legends",
+        "mode:aoe2": "2/Age of Empires II"
+    ]
     
     @Published var width: String = UserDefaults.standard.string(forKey: "width") ?? "1920" {
-        didSet {UserDefaults.standard.set(self.width, forKey: "width")}
-    };
+        didSet { UserDefaults.standard.set(self.width, forKey: "width") }
+    }
+    
     @Published var height: String = UserDefaults.standard.string(forKey: "height") ?? "1080" {
-        didSet {UserDefaults.standard.set(self.height, forKey: "height")}
-    };
+        didSet { UserDefaults.standard.set(self.height, forKey: "height") }
+    }
+    
     @Published var active: Bool = UserDefaults.standard.bool(forKey: "active") {
-        didSet {UserDefaults.standard.set(self.active, forKey: "active")}
-    };
+        didSet { UserDefaults.standard.set(self.active, forKey: "active") }
+    }
+    
     @Published var activegames: Dictionary<String, Bool> = UserDefaults.standard.dictionary(forKey: "activegames") as? [String: Bool] ?? [:] {
-        didSet {UserDefaults.standard.set(self.activegames, forKey: "activegames")}
-    };
+        didSet { UserDefaults.standard.set(self.activegames, forKey: "activegames") }
+    }
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var lastTime: TimeInterval = 0;
-    var lastDeltaX: CGFloat = 0;
-    var lastDeltaY: CGFloat = 0;
+    var lastTime: TimeInterval = 0
+    var lastDeltaX: CGFloat = 0
+    var lastDeltaY: CGFloat = 0
         
     func applicationDidFinishLaunching(_ notification: Notification) {
         
         // remove stale games from activegames
         for (key, _) in AppState.shared.activegames {
-            if (AppState.shared.games[key] == nil) {
-                AppState.shared.activegames.removeValue(forKey: key);
+            if AppState.shared.games[key] == nil {
+                AppState.shared.activegames.removeValue(forKey: key)
             }
         }
         
-        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged], handler: {(event: NSEvent) in
-            if (self.lastTime != 0) { // ignore old events
-                if (event.timestamp <= self.lastTime) {
-                    self.lastDeltaX = 0;
-                    self.lastDeltaY = 0;
-                    return;
+        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged], handler: { (event: NSEvent) in
+            if self.lastTime != 0 { // ignore old events
+                if event.timestamp <= self.lastTime {
+                    self.lastDeltaX = 0
+                    self.lastDeltaY = 0
+                    return
                 }
             }
             
-            // pause if not activated
-            if (AppState.shared.active == false && (AppState.shared.activegames[(NSWorkspace().frontmostApplication?.bundleIdentifier ?? "")] ?? false) == false) {
-                return;
+            if !self.shouldLockMouse() {
+                return
             }
             
             // mouse lock
-            let deltaX = event.deltaX - self.lastDeltaX;
-            let deltaY = event.deltaY - self.lastDeltaY;
-            let x = event.locationInWindow.flipped.x;
-            let y = event.locationInWindow.flipped.y;
+            let deltaX = event.deltaX - self.lastDeltaX
+            let deltaY = event.deltaY - self.lastDeltaY
+            let x = event.locationInWindow.flipped.x
+            let y = event.locationInWindow.flipped.y
 
             let window = (NSScreen.main?.frame.size)!
             
-            let width = CGFloat(Int(AppState.shared.width) ?? Int(window.width));
-            let height = CGFloat(Int(AppState.shared.height) ?? Int(window.height));
+            let width = CGFloat(Int(AppState.shared.width) ?? Int(window.width))
+            let height = CGFloat(Int(AppState.shared.height) ?? Int(window.height))
             
             // add 1 to be sure we're completely inside window
-            let widthCut = ((window.width - width) / 2) + 1;
-            let heightCut = ((window.height - height) / 2) + 1;
+            let widthCut = ((window.width - width) / 2) + 1
+            let heightCut = ((window.height - height) / 2) + 1
             
             // confine points to width and height
-            let xPoint = clamp(x + deltaX, minValue: widthCut, maxValue: window.width - widthCut);
-            let yPoint = clamp(y + deltaY, minValue: heightCut, maxValue: window.height - heightCut);
+            let xPoint = clamp(x + deltaX, minValue: widthCut, maxValue: window.width - widthCut)
+            let yPoint = clamp(y + deltaY, minValue: heightCut, maxValue: window.height - heightCut)
             
             // save old deltas
-            self.lastDeltaX = xPoint - x;
-            self.lastDeltaY = yPoint - y;
+            self.lastDeltaX = xPoint - x
+            self.lastDeltaY = yPoint - y
             
-            CGWarpMouseCursorPosition(CGPoint(x: xPoint, y: yPoint));
-            self.lastTime = ProcessInfo.processInfo.systemUptime;
-        });
+            CGWarpMouseCursorPosition(CGPoint(x: xPoint, y: yPoint))
+            self.lastTime = ProcessInfo.processInfo.systemUptime
+        })
+    }
+    
+    private func shouldLockMouse() -> Bool {
+        if AppState.shared.active {
+            return true
+        }
+        
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        let bundleID = frontApp?.bundleIdentifier ?? ""
+        let appName = frontApp?.localizedName ?? ""
+        
+        if AppState.shared.activegames[bundleID] ?? false {
+            return true
+        }
+        
+        if AppState.shared.activegames["mode:aoe2"] ?? false {
+            let crossoverFocused =
+                appName.localizedCaseInsensitiveContains("CrossOver") ||
+                bundleID.localizedCaseInsensitiveContains("crossover")
+            
+            if crossoverFocused && processExists("AoE2DE_s.exe") {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private func processExists(_ pattern: String) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        task.arguments = ["-fi", pattern]
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 }
 
-
-public func clamp<T>(_ value: T, minValue: T, maxValue: T) -> T where T : Comparable {
+public func clamp<T>(_ value: T, minValue: T, maxValue: T) -> T where T: Comparable {
     return min(max(value, minValue), maxValue)
 }
 
